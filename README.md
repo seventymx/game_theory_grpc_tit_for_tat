@@ -2,7 +2,7 @@
 
 ```powershell
 # Generate the Go gRPC client and server stubs
-./generate_go.sh
+Update-GoGrpc -ProtosArray @("model", "strategy", "playing_field")
 
 # Build the Go service
 go build

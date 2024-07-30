@@ -20,25 +20,73 @@
   };
 
   outputs =
-    { self, ... }@inputs:
+    { self, base_flake, ... }@inputs:
     inputs.flake-utils.lib.eachDefaultSystem (
       system:
       let
         unstable = import inputs.nixpkgs { inherit system; };
 
-        baseDevShell = inputs.base_flake.outputs.devShell.${system};
+        pname = "tit_for_tat-service";
+        version = "${base_flake.majorMinorVersion.${system}}.0";
+
+        baseDevShell = base_flake.devShell.${system};
+
+        buildDependencies = baseDevShell.buildInputs ++ [
+          unstable.protobuf
+          unstable.go
+          unstable.protoc-gen-go # Go protoc plugin
+          unstable.protoc-gen-go-grpc # Go gRPC plugin
+        ];
       in
       {
         devShell = unstable.mkShell {
-          buildInputs = baseDevShell.buildInputs ++ [
-            unstable.protobuf
-            unstable.go
+          buildInputs = buildDependencies ++ [
             unstable.delve # Go debugging
-            unstable.protoc-gen-go # Go protoc plugin
-            unstable.protoc-gen-go-grpc # Go gRPC plugin
           ];
-
           shellHook = baseDevShell.shellHook;
+        };
+
+        packages.default = unstable.stdenv.mkDerivation {
+          pname = pname;
+          version = version;
+
+          src = ./.;
+
+          buildInputs = buildDependencies;
+
+          buildPhase = ''
+            # Set environment variables for compilation
+            export PROTOBUF_PATH=${base_flake.protos.${system}}
+            export GOCACHE=$(pwd)/.cache/go-build
+            export GOMODCACHE=$(pwd)/.cache/go-mod
+
+            export PSModulePath="${base_flake.powershell_modules.${system}}"
+
+            # Create a subdirectory with the project name and move everything into it
+            mkdir tit_for_tat
+
+            # Enable extended pattern matching features in Bash
+            shopt -s extglob
+
+            mv !(tit_for_tat) tit_for_tat/
+            cd tit_for_tat
+
+            pwsh -Command "& {
+              Import-Module GrpcGenerator
+
+              # Generate the gRPC client and server code from the protos
+              Update-GoGrpc -ProtosArray @('model', 'strategy', 'playing_field')
+            }"
+
+            # Build the project
+            go build -o $out/tit_for_tat
+          '';
+
+          meta = with inputs.nixpkgs.lib; {
+            description = "Tit-for-Tat strategy service that subscribes to playing_field and gets invoked during matchups.";
+            license = licenses.mpl20;
+            maintainers = with maintainers; [ steffen70 ];
+          };
         };
       }
     );
